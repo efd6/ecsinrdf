@@ -1,4 +1,4 @@
-module ecsinrdf
+module github.com/efd6/ecsinrdf
 
 go 1.17
 
