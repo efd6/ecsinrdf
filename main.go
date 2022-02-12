@@ -64,8 +64,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer fr.Close()
-
 		dec = yaml.NewDecoder(fr)
 		dec.KnownFields(true)
 		for {
@@ -154,12 +152,8 @@ func ecsSpec(path, version string) (io.Reader, error) {
 	return &buf, nil
 }
 
-func fieldsReader(path string) (io.ReadCloser, error) {
-	var (
-		readers []io.Reader
-		mr      multiReaderCloser
-	)
-
+func fieldsReader(path string) (io.Reader, error) {
+	var readers []io.Reader
 	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
@@ -170,36 +164,37 @@ func fieldsReader(path string) (io.ReadCloser, error) {
 		if filepath.Base(filepath.Dir(path)) != "fields" {
 			return nil
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		mr.files = append(mr.files, f)
+		f := &lazyFile{path: path}
 		readers = append(readers, f)
 		return nil
 	})
 	if err != nil {
-		mr.Close()
 		return nil, err
 	}
-
-	mr.Reader = io.MultiReader(readers...)
-
-	return &mr, nil
+	return io.MultiReader(readers...), nil
 }
 
-type multiReaderCloser struct {
-	io.Reader
-	files []*os.File
+type lazyFile struct {
+	path string
+	file *os.File
+	err  error
 }
 
-func (mr *multiReaderCloser) Close() error {
-	var err error
-	for _, f := range mr.files {
-		e := f.Close()
-		if err != nil {
-			err = e
+func (f *lazyFile) Read(b []byte) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	if f.file == nil {
+		f.file, f.err = os.Open(f.path)
+		if f.err != nil {
+			return 0, f.err
 		}
 	}
-	return err
+	n, err := f.file.Read(b)
+	if err != nil {
+		f.file.Close()
+		f.file = nil
+		f.err = err
+	}
+	return n, err
 }
